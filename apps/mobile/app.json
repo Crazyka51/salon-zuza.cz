@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Salon Zuza - správa rezervací",
+    "slug": "salonzuza-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/salon-zuza-icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/salon-zuza-splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#f8f7f3"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/salon-zuza-icon.png",
+        "monochromeImage": "./assets/salon-zuza-icon.png",
+        "backgroundColor": "#f8f7f3"
+      },
+      "package": "cz.salonzuza.mobile",
+      "predictiveBackGestureEnabled": false
+    }
+  }
+}

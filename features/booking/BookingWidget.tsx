@@ -1,0 +1,2092 @@
+'use client';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Calendar,
+  Clock, 
+  Settings, 
+  Users, 
+  BarChart3,
+  CalendarDays,
+  Check,
+  X,
+  Eye,
+  Edit,
+  Trash2,
+  Plus,
+  Filter,
+  Download,
+  PhoneCall,
+  Mail,
+  MapPin,
+  AlertTriangle,
+  Lightbulb
+} from 'lucide-react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CalendarView, ReservationForm } from '@/admin-kit/ui/Calendar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Rezervace } from '@/types/rezervace';
+import { STAV, STAV_LABELS, normalizovatStav, type StavRezervace } from '@/lib/reservations/stav';
+import { clientAuthorizedFetch } from '@/lib/auth-fetch-client';
+import {
+  BlockedTermItem,
+  ProvozniHodiny,
+  RawBlockedTermItem,
+  ReservationDraft,
+  ReservationFilters,
+} from './booking-types';
+import { useToast } from '@/hooks/use-toast';
+
+interface BookingWidgetProps {
+  initialTab?: 'seznam' | 'kalendar' | 'nastaveni';
+}
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const toDateKey = (value: string | Date): string => {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  return formatLocalDate(date);
+};
+
+export function BookingWidget({ initialTab = 'seznam' }: BookingWidgetProps) {
+  const { toast } = useToast();
+  
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmText?: string;
+    cancelText?: string;
+    isLoading?: boolean;
+  }>({ 
+    isOpen: false, 
+    title: '', 
+    message: '', 
+    onConfirm: () => {},
+    confirmText: 'Potvrdit',
+    cancelText: 'Zrušit',
+    isLoading: false
+  });
+  
+  // Helper function to show confirmation dialog
+  const showConfirmDialog = (title: string, message: string, onConfirm: () => void, confirmText = 'Potvrdit', cancelText = 'Zrušit') => {
+    setConfirmDialog({ 
+      isOpen: true, 
+      title, 
+      message, 
+      onConfirm, 
+      confirmText, 
+      cancelText 
+    });
+  };
+  
+  // Helper function to close confirmation dialog
+  const closeConfirmDialog = () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeInfoIndex, setActiveInfoIndex] = useState(0);
+  const [rezervace, setRezervace] = useState<Rezervace[]>([]);
+  const [selectedReservations, setSelectedReservations] = useState<number[]>([]);
+  const [selectionAnchorId, setSelectionAnchorId] = useState<number | null>(null);
+  const shiftClickRef = useRef(false);
+  const [provozniHodiny, setProvozniHodiny] = useState<ProvozniHodiny[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingHodiny, setLoadingHodiny] = useState(false);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(new Date());
+  const [showReservationForm, setShowReservationForm] = useState(false);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showBulkStatusDialog, setShowBulkStatusDialog] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState<StavRezervace>(STAV.POTVRZENO);
+  const [isUpdatingBulkStatus, setIsUpdatingBulkStatus] = useState(false);
+  const [filters, setFilters] = useState<ReservationFilters>({
+    search: '',
+    stav: 'all',
+    datumOd: '',
+    datumDo: '',
+    obdobi: 'aktivni',
+  });
+  const [exportRange, setExportRange] = useState({
+    datumOd: '',
+    datumDo: '',
+  });
+
+  const handleTabChange = (tab: string) => {
+    if (tab !== 'seznam' && tab !== 'kalendar' && tab !== 'nastaveni') return;
+    setActiveTab(tab);
+    window.history.replaceState(null, '', `/admin/rezervace/${tab}`);
+  };
+
+  useEffect(() => {
+    if (window.location.pathname === '/admin/rezervace' || window.location.pathname === '/admin/rezervace/') {
+      window.history.replaceState(null, '', `/admin/rezervace/${initialTab}`);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setActiveInfoIndex((currentIndex) => (currentIndex + 1) % 3);
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  // Blokované termíny
+  const [blockedTerms, setBlockedTerms] = useState<BlockedTermItem[]>([]);
+  const [loadingBlocks, setLoadingBlocks] = useState(false);
+  const [showBlockDialog, setShowBlockDialog] = useState(false);
+  const [isSavingBlock, setIsSavingBlock] = useState(false);
+  const [blockForm, setBlockForm] = useState<{ id?: number; nazev: string; popis?: string; datumOd: string; datumDo: string; jednoDen: boolean }>({ id: 0, nazev: '', popis: '', datumOd: '', datumDo: '', jednoDen: false });
+
+  const loadBlockedTerms = async () => {
+    setLoadingBlocks(true);
+    try {
+      const res = await fetch('/api/admin/rezervace/blokovane-terminy');
+      if (res.ok) {
+        const data = await res.json();
+        const rawTerms = (data.blokovaneTerminy || []) as RawBlockedTermItem[];
+        let terms: BlockedTermItem[] = rawTerms.map((term) => ({
+          id: term.id ?? 0,
+          nazev: term.nazev ?? '',
+          popis: term.popis,
+          datumOd: (term.datumOd ?? term.datum_od ?? '').slice(0, 10),
+          datumDo: (term.datumDo ?? term.datum_do ?? '').slice(0, 10),
+          source: term.source,
+        }));
+        
+        // Pouze lokální filtrování starých termínů v UI (bez mazání z DB)
+        const today = formatLocalDate(new Date());
+
+        // Filtrovat pouze aktivní termíny (od dneška)
+        terms = terms.filter((t: BlockedTermItem) => {
+          const datumDo = t.datumDo;
+          return datumDo >= today;
+        });
+        
+        setBlockedTerms(terms);
+      }
+    } catch (err) {
+      console.error('Chyba při načítání blokovaných termínů:', err);
+      setBlockedTerms([]);
+    } finally {
+      setLoadingBlocks(false);
+    }
+  };
+
+  const openCreateBlock = () => {
+    setBlockForm({ id: 0, nazev: '', popis: '', datumOd: '', datumDo: '', jednoDen: false });
+    setShowBlockDialog(true);
+  };
+
+  const openEditBlock = (b: BlockedTermItem) => {
+    const datumOd = b.datumOd;
+    const datumDo = b.datumDo;
+    setBlockForm({ 
+      id: b.id, 
+      nazev: b.nazev, 
+      popis: b.popis || '', 
+      datumOd, 
+      datumDo,
+      jednoDen: datumOd === datumDo
+    });
+    setShowBlockDialog(true);
+  };
+
+  const saveBlock = async () => {
+    if (!blockForm.nazev || !blockForm.datumOd || (!blockForm.jednoDen && !blockForm.datumDo)) {
+      toast({
+        title: "Chyba validace",
+        description: "Vyplňte prosím název a datum",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Pokud je vybrán pouze jeden den, nastavit datum do stejně jako datum od
+    const finalDatumDo = blockForm.jednoDen ? blockForm.datumOd : blockForm.datumDo;
+
+    if (!blockForm.jednoDen && blockForm.datumOd > finalDatumDo) {
+      toast({
+        title: "Chyba validace",
+        description: "Datum OD musí být před DATUM DO",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsSavingBlock(true);
+    try {
+      const payload = { 
+        nazev: blockForm.nazev, 
+        popis: blockForm.popis || null, 
+        datumOd: blockForm.datumOd, 
+        datumDo: finalDatumDo
+      };
+      const url = blockForm.id && blockForm.id > 0 ? `/api/admin/rezervace/blokovane-terminy/${blockForm.id}` : '/api/admin/rezervace/blokovane-terminy';
+      const method = blockForm.id && blockForm.id > 0 ? 'PUT' : 'POST';
+      const resp = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!resp.ok) throw new Error('Chyba při ukládání');
+      setShowBlockDialog(false);
+      await loadBlockedTerms();
+      toast({
+        title: "Úspěch",
+        description: "Blokovaný termín uložen",
+        variant: "default"
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Chyba",
+        description: "Nepodařilo se uložit blokovaný termín",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSavingBlock(false);
+    }
+  };
+
+  // Data načtená z API - mockRezervace již se nepoužívají
+  // Všechna data přicházejí z databáze skrz /api/rezervace
+  
+  useEffect(() => {
+    loadReservations();
+    loadProvozniHodiny();
+    loadBlockedTerms();
+  }, []);
+
+  // Načtení provozních hodin z API
+  const loadProvozniHodiny = async () => {
+    setLoadingHodiny(true);
+    try {
+      const response = await fetch('/api/admin/provozni-hodiny');
+      if (response.ok) {
+        const data = await response.json();
+        setProvozniHodiny(data);
+      }
+    } catch (error) {
+      console.error('Chyba při načítání provozních hodin:', error);
+    } finally {
+      setLoadingHodiny(false);
+    }
+  };
+
+  const [showHoursDialog, setShowHoursDialog] = useState(false);
+  const [hoursDraft, setHoursDraft] = useState('');
+  const [editingHoursDay, setEditingHoursDay] = useState<ProvozniHodiny | null>(null);
+
+  const handleEditOpeningHours = (den: ProvozniHodiny) => {
+    setEditingHoursDay(den);
+    setHoursDraft(den.jeZavreno ? 'zavřeno' : `${den.casOtevrani}-${den.casZavreni}`);
+    setShowHoursDialog(true);
+  };
+
+  const saveHoursDialog = async () => {
+    if (!editingHoursDay) return;
+
+    const input = hoursDraft.trim();
+    if (!input) {
+      toast({
+        title: "Chyba validace",
+        description: "Zadejte hodnotu",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (input.toLowerCase() === 'zavřeno') {
+      await updateOpeningHours(editingHoursDay.id, '00:00', '00:00', true);
+      setShowHoursDialog(false);
+      return;
+    }
+
+    const match = input.match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+    if (!match) {
+      toast({
+        title: "Chyba validace",
+        description: "Neplatný formát. Použijte HH:MM-HH:MM",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    await updateOpeningHours(editingHoursDay.id, match[1], match[2], false);
+    setShowHoursDialog(false);
+  };
+
+  const updateOpeningHours = async (id: number, casOtevrani: string, casZavreni: string, jeZavreno: boolean) => {
+    try {
+      const response = await fetch('/api/admin/provozni-hodiny', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, casOtevrani, casZavreni, jeZavreno })
+      });
+      
+      if (response.ok) {
+        toast({
+          title: "Úspěch",
+          description: "Otevírací doba byla aktualizována!",
+          variant: "default"
+        });
+        loadProvozniHodiny();
+      } else {
+        toast({
+          title: "Chyba",
+          description: "Chyba při ukládání.",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error('Error updating hours:', error);
+      toast({
+        title: "Chyba",
+        description: "Chyba při úpravě.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Načtení rezervací z API
+  const loadReservations = async () => {
+    setLoading(true);
+    try {
+      // Načteme celou historii, aby fungovalo filtrování i historických stavů.
+      const response = await clientAuthorizedFetch('/api/rezervace');
+      
+      if (response.ok) {
+        const data = await response.json();
+        setRezervace(data.rezervace || []);
+        setSelectedReservations([]); // Vymazání výběru při načtení nových dat
+      } else {
+        console.error('❌ API chyba:', response.status, response.statusText);
+        setRezervace([]);
+        setSelectedReservations([]);
+      }
+    } catch (error) {
+      console.error('❌ Chyba při načítání rezervací:', error);
+      setRezervace([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handlery pro kalendář
+  const handleCalendarDateSelect = (date: Date) => {
+    setSelectedCalendarDate(date);
+  };
+
+  const filteredRezervace = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+
+    return rezervace.filter((r) => {
+      const dateKey = toDateKey(r.datum);
+      const today = formatLocalDate(new Date());
+      const periodMatch = filters.obdobi === 'vse'
+        || (filters.obdobi === 'aktivni' && dateKey >= today)
+        || (filters.obdobi === 'uplynule' && dateKey < today);
+      const stavMatch = filters.stav === 'all' || r.stav === filters.stav;
+      const dateFromMatch = !filters.datumOd || dateKey >= filters.datumOd;
+      const dateToMatch = !filters.datumDo || dateKey <= filters.datumDo;
+
+      if (!periodMatch || !stavMatch || !dateFromMatch || !dateToMatch) {
+        return false;
+      }
+
+      if (!search) {
+        return true;
+      }
+
+      const haystack = [
+        `#${r.id}`,
+        String(r.id),
+        r.jmeno,
+        r.prijmeni,
+        r.email,
+        r.telefon,
+        r.sluzby,
+        r.sluzba?.nazev,
+        r.kadernice,
+        r.zamestnanec?.jmeno,
+        r.zamestnanec?.prijmeni,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(search);
+    });
+  }, [rezervace, filters]);
+
+  const selectedVisibleCount = useMemo(
+    () => filteredRezervace.filter((r) => selectedReservations.includes(r.id)).length,
+    [filteredRezervace, selectedReservations]
+  );
+
+  const resetFilters = () => {
+    setFilters({ search: '', stav: 'all', datumOd: '', datumDo: '', obdobi: 'aktivni' });
+  };
+
+  const openExportDialog = () => {
+    const allDateKeys = rezervace.map((r) => toDateKey(r.datum)).sort();
+    const defaultFrom = filters.datumOd || allDateKeys[0] || '';
+    const defaultTo = filters.datumDo || allDateKeys[allDateKeys.length - 1] || '';
+
+    setExportRange({
+      datumOd: defaultFrom,
+      datumDo: defaultTo,
+    });
+    setShowExportDialog(true);
+  };
+
+  const handleExportReservations = () => {
+    if (!exportRange.datumOd || !exportRange.datumDo) {
+      toast({
+        title: 'Export',
+        description: 'Vyberte prosim datum od a datum do.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (exportRange.datumOd > exportRange.datumDo) {
+      toast({
+        title: 'Export',
+        description: 'Datum od musi byt mensi nebo rovno datu do.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const exportData = filteredRezervace.filter((r) => {
+      const dateKey = toDateKey(r.datum);
+      return dateKey >= exportRange.datumOd && dateKey <= exportRange.datumDo;
+    });
+
+    if (exportData.length === 0) {
+      toast({
+        title: 'Export',
+        description: 'Není co exportovat pro zvolené datumové rozmezí.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const escapeCsv = (value: unknown) => {
+      const text = String(value ?? '');
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+
+    const headers = [
+      'ID',
+      'Datum',
+      'Cas od',
+      'Cas do',
+      'Jmeno',
+      'Prijmeni',
+      'Email',
+      'Telefon',
+      'Sluzba',
+      'Kadernice',
+      'Stav',
+      'Cena',
+      'Pocet osob',
+      'Pocet deti',
+      'Poznamka',
+    ];
+
+    const rows = exportData.map((r) => [
+      r.id,
+      toDateKey(r.datum),
+      r.casOd || r.cas_od || '',
+      r.casDo || r.cas_do || '',
+      r.jmeno,
+      r.prijmeni,
+      r.email,
+      r.telefon,
+      r.sluzby || r.sluzba?.nazev || '',
+      r.kadernice || r.zamestnanec?.jmeno || '',
+      r.stav,
+      r.cena,
+      r.pocetOsob || 1,
+      r.pocetDeti || 0,
+      r.poznamka || '',
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((line) => line.map(escapeCsv).join(';'))
+      .join('\n');
+
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rezervace-export-${exportRange.datumOd}_az_${exportRange.datumDo}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setShowExportDialog(false);
+
+    toast({
+      title: 'Export dokoncen',
+      description: `Vyexportovano ${exportData.length} rezervaci.`,
+      variant: 'default',
+    });
+  };
+
+  // Funkce pro práci s výběrem rezervací
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedReservations(filteredRezervace.map(r => r.id));
+    } else {
+      setSelectedReservations([]);
+    }
+    setSelectionAnchorId(null);
+  };
+
+  const handleSelectReservation = (id: number, checked: boolean, shiftKey: boolean) => {
+    const anchorIndex = selectionAnchorId === null
+      ? -1
+      : filteredRezervace.findIndex((reservation) => reservation.id === selectionAnchorId);
+    const clickedIndex = filteredRezervace.findIndex((reservation) => reservation.id === id);
+    const rangeIds = shiftKey && anchorIndex >= 0 && clickedIndex >= 0
+      ? filteredRezervace
+          .slice(Math.min(anchorIndex, clickedIndex), Math.max(anchorIndex, clickedIndex) + 1)
+          .map((reservation) => reservation.id)
+      : [id];
+
+    setSelectedReservations((previous) => {
+      if (checked) {
+        return Array.from(new Set([...previous, ...rangeIds]));
+      }
+      return previous.filter((reservationId) => !rangeIds.includes(reservationId));
+    });
+    setSelectionAnchorId(id);
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedReservations.length === 0) {
+      return;
+    }
+    
+    showConfirmDialog(
+      "Potvrdit smazání",
+      `Opravdu chcete smazat ${selectedReservations.length} vybraných rezervací? Tato akce je nevratná.`,
+      async () => {
+        try {
+          
+          const response = await fetch('/api/rezervace', {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: selectedReservations })
+          });
+          
+        
+          if (!response.ok) {
+            const errorData = await response.json();
+            console.error('API Error:', errorData);
+            throw new Error(errorData.error || 'Chyba při mazání rezervací');
+          }
+          
+          const result = await response.json();
+          
+          // Odebrání z lokálního stavu
+          setRezervace(prev => prev.filter(r => !selectedReservations.includes(r.id)));
+          setSelectedReservations([]);
+          
+          toast({
+            title: "Úspěch",
+            description: `${result.deletedCount} rezervací bylo úspěšně smazáno z databáze.`,
+            variant: "default"
+          });
+        } catch (error) {
+          console.error('Chyba při mazání rezervací:', error);
+          toast({
+            title: "Chyba",
+            description: `Chyba při mazání rezervací: ${error instanceof Error ? error.message : 'Neznámá chyba'}`,
+            variant: "destructive"
+          });
+        } finally {
+          closeConfirmDialog();
+        }
+      },
+      "Smazat",
+      "Zrušit"
+    );
+  };
+
+  const handleBulkStatusUpdate = async () => {
+    if (selectedReservations.length === 0) return;
+
+    setIsUpdatingBulkStatus(true);
+    try {
+      const responses = await Promise.all(
+        selectedReservations.map((id) =>
+          fetch(`/api/rezervace/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stav: bulkStatus }),
+          })
+        )
+      );
+
+      const failedResponse = responses.find((response) => !response.ok);
+      if (failedResponse) {
+        const errorData = await failedResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Některé rezervace se nepodařilo upravit');
+      }
+
+      setRezervace((previous) =>
+        previous.map((reservation) =>
+          selectedReservations.includes(reservation.id)
+            ? { ...reservation, stav: bulkStatus }
+            : reservation
+        )
+      );
+      setSelectedReservations([]);
+      setShowBulkStatusDialog(false);
+      toast({
+        title: 'Úspěch',
+        description: `${responses.length} rezervací má nyní stav „${STAV_LABELS[bulkStatus]}“.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Chyba',
+        description: error instanceof Error ? error.message : 'Nepodařilo se změnit stav rezervací',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUpdatingBulkStatus(false);
+    }
+  };
+
+  const isAllSelected = filteredRezervace.length > 0 && selectedVisibleCount === filteredRezervace.length;
+  const isSomeSelected = selectedVisibleCount > 0;
+
+  useEffect(() => {
+    setSelectedReservations((selected) =>
+      selected.filter((id) => filteredRezervace.some((reservation) => reservation.id === id))
+    );
+  }, [filteredRezervace]);
+
+  const handleReservationClick = (rezervace: Rezervace) => {
+    setDetailRezervace(rezervace);
+    setShowDetailDialog(true);
+    setExpandedServices(false); // Reset rozbalení při otevření nového detailu
+  };
+
+  const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [detailRezervace, setDetailRezervace] = useState<Rezervace | null>(null);
+  const [expandedServices, setExpandedServices] = useState(false);
+
+  const [showEditNoteDialog, setShowEditNoteDialog] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [priceDraft, setPriceDraft] = useState(0);
+  const [editingRezervation, setEditingRezervation] = useState<Rezervace | null>(null);
+  const [editDraft, setEditDraft] = useState<ReservationDraft>({
+    jmeno: '', prijmeni: '', email: '', telefon: '',
+    datum: '', casOd: '', casDo: '',
+    zamestnanecId: '', sluzbaId: '',
+    stav: STAV.CEKA_NA_POTVRZENI, cena: 0, zpusobPlatby: '',
+    poznamka: '', pocetOsob: 1, pocetDeti: 0,
+  });
+  const [editEmployees, setEditEmployees] = useState<{ id: number; jmeno: string; prijmeni: string }[]>([]);
+  const [editSluzby, setEditSluzby] = useState<{ id: number; nazev: string; cena?: number }[]>([]);
+  const [loadingEditData, setLoadingEditData] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleEditReservation = async (rezervace: Rezervace) => {
+    setEditingRezervation(rezervace);
+    setNoteDraft(rezervace.poznamka || '');
+    setPriceDraft(rezervace.cena || 0);
+
+    // Naplnit editDraft všemi poli rezervace
+    const zamestnanecId = String(rezervace.zamestnanecId || '');
+    const sluzbaId = String(rezervace.sluzbaId || '');
+    const casOd = rezervace.casOd || rezervace.cas_od || '';
+    const casDo = rezervace.casDo || rezervace.cas_do || '';
+    const datum = typeof rezervace.datum === 'string'
+      ? rezervace.datum.slice(0, 10)
+      : formatLocalDate(new Date(rezervace.datum));
+
+    setEditDraft({
+      jmeno: rezervace.jmeno || '',
+      prijmeni: rezervace.prijmeni || '',
+      email: rezervace.email || '',
+      telefon: rezervace.telefon || '',
+      datum,
+      casOd: casOd.slice(0, 5),
+      casDo: casDo.slice(0, 5),
+      zamestnanecId,
+      sluzbaId,
+      stav: rezervace.stav || STAV.CEKA_NA_POTVRZENI,
+      cena: rezervace.cena || 0,
+      zpusobPlatby: rezervace.zpusobPlatby || '',
+      poznamka: rezervace.poznamka || '',
+      pocetOsob: rezervace.pocetOsob || 1,
+      pocetDeti: rezervace.pocetDeti || 0,
+    });
+
+    // Načíst zaměstnance a služby pro select listy (lazy load)
+    if (editEmployees.length === 0 || editSluzby.length === 0) {
+      setLoadingEditData(true);
+      try {
+        const [empRes, sluzbyRes] = await Promise.all([
+          fetch('/api/admin/zamestnanci'),
+          fetch('/api/admin/sluzby'),
+        ]);
+        if (empRes.ok) {
+          const empData = await empRes.json();
+          setEditEmployees(empData.zamestnanci || empData || []);
+        }
+        if (sluzbyRes.ok) {
+          const sluzbyData = await sluzbyRes.json();
+          setEditSluzby(sluzbyData.sluzby || sluzbyData || []);
+        }
+      } catch (err) {
+        console.error('Chyba při načítání dat pro editaci:', err);
+      } finally {
+        setLoadingEditData(false);
+      }
+    }
+
+    setShowEditNoteDialog(true);
+  };
+
+  const saveReservationNote = async () => {
+    if (!editingRezervation) return;
+
+    if (editDraft.cena < 0) {
+      toast({ title: "Chyba validace", description: "Cena nemůže být záporná", variant: "destructive" });
+      return;
+    }
+    if (!editDraft.jmeno.trim() || !editDraft.prijmeni.trim()) {
+      toast({ title: "Chyba validace", description: "Jméno a příjmení jsou povinné", variant: "destructive" });
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const payload: Record<string, unknown> = {
+        jmeno: editDraft.jmeno.trim(),
+        prijmeni: editDraft.prijmeni.trim(),
+        email: editDraft.email.trim(),
+        telefon: editDraft.telefon.trim(),
+        datum: editDraft.datum,
+        casOd: editDraft.casOd,
+        casDo: editDraft.casDo,
+        stav: editDraft.stav,
+        cena: editDraft.cena,
+        zpusobPlatby: editDraft.zpusobPlatby,
+        poznamka: editDraft.poznamka,
+        pocetOsob: editDraft.pocetOsob,
+        pocetDeti: editDraft.pocetDeti,
+      };
+      if (editDraft.zamestnanecId) payload.zamestnanecId = parseInt(editDraft.zamestnanecId);
+      if (editDraft.sluzbaId) payload.sluzbaId = parseInt(editDraft.sluzbaId);
+
+      const response = await fetch(`/api/rezervace/${editingRezervation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        toast({ title: "Úspěch", description: "Rezervace byla aktualizována", variant: "default" });
+        setShowEditNoteDialog(false);
+        loadReservations();
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        toast({ title: "Chyba", description: errData.error || "Chyba při ukládání změn", variant: "destructive" });
+      }
+    } catch (err) {
+      console.error(err);
+      toast({ title: "Chyba", description: "Chyba při ukládání změn", variant: "destructive" });
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteReservation = async (rezervace: Rezervace) => {
+    showConfirmDialog(
+      "Potvrdit smazání",
+      `Opravdu chcete smazat rezervaci pro ${rezervace.jmeno} ${rezervace.prijmeni}?`,
+      async () => {
+        // Nastavit loading stav
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        
+        try {
+          const response = await fetch(`/api/rezervace/${rezervace.id}`, {
+            method: 'DELETE',
+          });
+          
+          if (response.ok) {
+            toast({
+              title: "Úspěch",
+              description: "Rezervace byla smazána!",
+              variant: "default"
+            });
+            loadReservations(); // Obnovit seznam
+          } else {
+            toast({
+              title: "Chyba",
+              description: "Chyba při mazání rezervace",
+              variant: "destructive"
+            });
+          }
+        } catch (error) {
+          console.error('Chyba při mazání:', error);
+          toast({
+            title: "Chyba",
+            description: "Chyba při mazání rezervace",
+            variant: "destructive"
+          });
+        } finally {
+          closeConfirmDialog();
+          // Resetovat loading stav
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+        }
+      },
+      "Smazat",
+      "Zrušit"
+    );
+  };
+
+  const handleConfirmReservation = async (rezervace: Rezervace) => {
+    try {
+      const response = await fetch(`/api/rezervace/${rezervace.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ...rezervace, stav: STAV.POTVRZENO }),
+      });
+      
+      if (response.ok) {
+        toast({
+          title: "Úspěch",
+          description: "Rezervace byla potvrzena!",
+          variant: "default"
+        });
+        loadReservations(); // Obnovit seznam
+      } else {
+        toast({
+          title: "Chyba",
+          description: "Chyba při potvrzování rezervace",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error('Chyba při potvrzování:', error);
+      toast({
+        title: "Chyba",
+        description: "Chyba při potvrzování rezervace",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleCreateReservation = (date?: Date, time?: string) => {
+    if (date) {
+      setSelectedCalendarDate(date);
+    }
+    setShowReservationForm(true);
+  };
+
+  const handleReservationFormSuccess = async () => {
+    await loadReservations();
+  };
+
+  const getStatusBadge = (stav: string) => {
+    const statusConfig: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; className: string }> = {
+      [STAV.CEKA_NA_POTVRZENI]: { label: 'Čeká na potvrzení', variant: 'secondary', className: 'border border-[#f59e0b]/30 bg-[#372810] text-[#fde047]' },
+      [STAV.POTVRZENO]: { label: 'Potvrzeno', variant: 'default', className: 'border border-[#10b981]/30 bg-[#14382c] text-[#a7f3d0]' },
+      [STAV.DOKONCENO]: { label: 'Dokončeno', variant: 'outline', className: 'bg-blue-200 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+      [STAV.ZRUSENO_ZAKAZNIKEM]: { label: 'Zrušeno zákazníkem', variant: 'destructive', className: 'bg-red-200 text-red-800 dark:bg-red-900 dark:text-red-200' },
+      [STAV.ZRUSENO_SALONEM]: { label: 'Zrušeno salonem', variant: 'destructive', className: 'bg-red-200 text-red-800 dark:bg-red-900 dark:text-red-200' },
+      [STAV.NEDORAZIL]: { label: 'Nedorazil', variant: 'destructive', className: 'bg-orange-200 text-orange-800 dark:bg-orange-900 dark:text-orange-200' },
+    };
+
+    // Legacy hodnoty z dřívějška (např. staré rezervace) se zobrazí přes normalizaci na kanonický stav
+    const config = statusConfig[stav] || statusConfig[normalizovatStav(stav)];
+    
+    // Fallback pro neznámé stavy
+    if (!config) {
+      return (
+        <Badge variant="secondary" className="bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+          {stav || 'Neznámý stav'}
+        </Badge>
+      );
+    }
+    
+    return (
+      <Badge variant={config.variant} className={config.className}>
+        {config.label}
+      </Badge>
+    );
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('cs-CZ', {
+      style: 'currency',
+      currency: 'CZK'
+    }).format(amount);
+  };
+
+  const formatDate = (dateStr: string) => {
+    const localDate = new Date(`${toDateKey(dateStr)}T12:00:00`);
+    return localDate.toLocaleDateString('cs-CZ', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  const getDayName = (dayNumber: number) => {
+    const days = ['Neděle', 'Pondělí', 'Úterý', 'Středa', 'Čtvrtek', 'Pátek', 'Sobota'];
+    return days[dayNumber];
+  };
+
+  // Statistiky
+  const getBookingStats = () => {
+    const today = formatLocalDate(new Date());
+    const thisMonth = new Date().getMonth();
+    const thisYear = new Date().getFullYear();
+
+    const todayBookings = rezervace.filter(r => toDateKey(r.datum) === today);
+    const monthlyBookings = rezervace.filter(r => {
+      const [year, month] = toDateKey(r.datum).split('-').map(Number);
+      return month - 1 === thisMonth && year === thisYear;
+    });
+    
+    const pendingBookings = rezervace.filter(r => r.stav === STAV.CEKA_NA_POTVRZENI);
+    const monthlyRevenue = monthlyBookings.reduce((sum, r) => sum + r.cena, 0);
+
+    return {
+      today: todayBookings.length,
+      monthly: monthlyBookings.length,
+      pending: pendingBookings.length,
+      revenue: monthlyRevenue
+    };
+  };
+
+  const stats = getBookingStats();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#B8A876]"></div>
+        <span className="ml-2 text-muted-foreground">Načítání rezervací...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-4">
+      <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-5">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-[#A39566]">
+            <CalendarDays className="h-4 w-4" />
+            Provozovna
+          </div>
+          <h1 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-[#B8A876]">
+            Rezervační systém
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Přehled termínů, klientů a obsazenosti salonu
+          </p>
+        </div>
+      </div>
+
+      {/* Old stats section moved */}
+
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList className="inline-grid grid-cols-3 h-auto w-full sm:w-auto gap-0 rounded-none border-b border-neutral-800 bg-transparent p-0 mb-4">
+          <TabsTrigger value="seznam" className="px-4 py-2 text-sm rounded-t-md data-[state=active]:bg-muted data-[state=active]:border-t data-[state=active]:border-l data-[state=active]:border-r data-[state=active]:border-neutral-800 data-[state=inactive]:bg-transparent data-[state=inactive]:text-neutral-400">Seznam</TabsTrigger>
+          <TabsTrigger value="kalendar" className="px-4 py-2 text-sm rounded-t-md data-[state=active]:bg-muted data-[state=active]:border-t data-[state=active]:border-l data-[state=active]:border-r data-[state=active]:border-neutral-800 data-[state=inactive]:bg-transparent data-[state=inactive]:text-neutral-400">Kalendář</TabsTrigger>
+          <TabsTrigger value="nastaveni" className="px-4 py-2 text-sm rounded-t-md data-[state=active]:bg-muted data-[state=active]:border-t data-[state=active]:border-l data-[state=active]:border-r data-[state=active]:border-neutral-800 data-[state=inactive]:bg-transparent data-[state=inactive]:text-neutral-400">Nastavení</TabsTrigger>
+        </TabsList>
+          {activeTab === 'seznam' && (
+            <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-[#2a2215] px-4 py-3 text-sm text-amber-200/90 shadow-sm">
+              <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+              <p>
+                <span className="font-semibold">Informace:</span>{' '}
+                {activeInfoIndex === 0
+                  ? 'Rezervace, která čeká na potvrzení, neblokuje termín v kalendáři.'
+                  : activeInfoIndex === 1
+                    ? 'Pro výběr více řádků s rezervací podržte klávesu Shift.'
+                    : 'Rozvrh zaměstnance je opakující se týdenní šablona; Tzn pokud je nastavená sobota - opakuje se každou sobotu.'}
+              </p>
+            </div>
+          )}
+
+        {/* Seznam rezervací */}
+        <TabsContent value="seznam" className="mt-4">
+          <Card className="rounded-md border border-neutral-800">
+            <CardHeader className="p-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div className="space-y-2">
+                  <CardTitle className="text-base sm:text-lg">Seznam všech rezervací ({filteredRezervace.length}/{rezervace.length})</CardTitle>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto [&_button]:h-8 [&_button]:px-3 [&_button]:text-sm">
+                  {isSomeSelected && (
+                    <>
+                      <Button
+                        onClick={() => setShowBulkStatusDialog(true)}
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                      >
+                        <Check className="h-4 w-4 mr-2" />
+                        Změnit stav ({selectedVisibleCount})
+                      </Button>
+                      <Button
+                        onClick={handleDeleteSelected}
+                        variant="destructive"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Smazat vybrané ({selectedVisibleCount})
+                      </Button>
+                    </>
+                  )}
+                  <Button onClick={() => handleCreateReservation()} className="w-full sm:w-auto">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Nová rezervace
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowFilterDialog(true)}>
+                    <Filter className="h-4 w-4 mr-2" />
+                    Filtrovat
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={openExportDialog}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3 pt-0">
+              <div className="overflow-x-auto">
+                <Table className="[&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2 text-sm">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          ref={(input) => {
+                            if (input) input.indeterminate = isSomeSelected && !isAllSelected;
+                          }}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          aria-label="Vybrat všechny rezervace"
+                        />
+                      </TableHead>
+                      <TableHead className="min-w-20">Číslo</TableHead>
+                      <TableHead className="min-w-50">Klient</TableHead>
+                      <TableHead className="min-w-28">Datum</TableHead>
+                      <TableHead className="min-w-28">Čas rezervace</TableHead>
+                      <TableHead className="min-w-45">Služby</TableHead>
+                      <TableHead className="min-w-30">Kadeřnice</TableHead>
+                      <TableHead className="min-w-20">Počet osob</TableHead>
+                      <TableHead className="min-w-25">Stav</TableHead>
+                      <TableHead className="min-w-20">Cena</TableHead>
+                      <TableHead className="min-w-30">Akce</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                <TableBody>
+                  {filteredRezervace.map((rezervace) => (
+                    <TableRow
+                      key={rezervace.id}
+                      className={`h-10 cursor-pointer ${selectedReservations.includes(rezervace.id) ? "bg-accent border-accent-foreground" : ""}`}
+                      onClick={() => handleReservationClick(rezervace)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          handleReservationClick(rezervace);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-label={`Zobrazit detail rezervace ${rezervace.jmeno} ${rezervace.prijmeni}`}
+                    >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedReservations.includes(rezervace.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shiftClickRef.current = e.shiftKey;
+                          }}
+                          onChange={(e) => {
+                            handleSelectReservation(rezervace.id, e.target.checked, shiftClickRef.current);
+                            shiftClickRef.current = false;
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          aria-label={`Vybrat rezervaci ${rezervace.jmeno} ${rezervace.prijmeni}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-semibold text-[#A39566] border-[#D8CDAA] bg-transparent">
+                          #{rezervace.id}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">
+                          {rezervace.jmeno} {rezervace.prijmeni}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{new Date(`${toDateKey(rezervace.datum)}T12:00:00`).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' })}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          {(rezervace.cas_od || rezervace.casOd)} - {(rezervace.cas_do || rezervace.casDo)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-45">
+                        <div className="max-w-full">
+                          <div 
+                            className="font-medium text-sm truncate" 
+                            title={rezervace.sluzba?.nazev || 'Služba není specifikována'}
+                          >
+                            {rezervace.sluzba?.nazev || 'Služba není specifikována'}
+                          </div>
+                          {rezervace.sluzby && (
+                            <div 
+                              className="text-xs text-muted-foreground truncate" 
+                              title={`SLUŽBY: ${rezervace.sluzby}`}
+                            >
+                              SLUŽBY: {rezervace.sluzby}
+                            </div>
+                          )}
+                          {rezervace.poznamka && (
+                            <div 
+                              className="text-xs text-muted-foreground truncate" 
+                              title={rezervace.poznamka}
+                            >
+                              {rezervace.poznamka}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                          {rezervace.kadernice || rezervace.zamestnanec?.jmeno ? (
+                            <div className="font-medium text-sm">
+                              {rezervace.kadernice || rezervace.zamestnanec?.jmeno}
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400/80">
+                              Nepřiřazeno
+                            </span>
+                          )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          <div className="font-medium">{rezervace.pocetOsob || 1} osob</div>
+                          {(rezervace.pocetDeti || 0) > 0 && (
+                            <div className="text-xs text-muted-foreground">{rezervace.pocetDeti} děti</div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {getStatusBadge(rezervace.stav)}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {formatCurrency(rezervace.cena)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end" onClick={(e) => e.stopPropagation()}>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="Zobrazit detail"
+                            onClick={() => handleReservationClick(rezervace)}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Eye className="h-3 w-3 text-slate-400 transition-colors group-hover:text-slate-200" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="Upravit rezervaci"
+                            onClick={() => handleEditReservation(rezervace)}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Edit className="h-3 w-3 text-slate-400 transition-colors group-hover:text-amber-400" />
+                          </Button>
+                          {rezervace.stav === STAV.CEKA_NA_POTVRZENI && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              title="Potvrdit rezervaci"
+                              onClick={() => handleConfirmReservation(rezervace)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Check className="h-3 w-3 text-emerald-500/70 transition-colors group-hover:text-emerald-400" />
+                            </Button>
+                          )}
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="Zrušit rezervaci"
+                            onClick={() => handleDeleteReservation(rezervace)}
+                            className="h-8 w-8 p-0"
+                          >
+                            <X className="h-4 w-4 text-rose-500/70 transition-colors group-hover:text-rose-400" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {filteredRezervace.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                        Žádné rezervace neodpovídají zvoleným filtrům.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className={`border-l-4 border-l-amber-400 shadow-sm ${stats.pending > 0 ? 'animate-pending-shake' : ''}`}>
+              <CardContent className="p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ke schválení</p>
+                    <p className="mt-1 text-2xl font-bold text-foreground">{stats.pending}</p>
+                    <p className="text-xs text-muted-foreground">čekajících žádostí</p>
+                  </div>
+                  <Clock className="h-5 w-5 text-amber-500" />
+                </div>
+              </CardContent>
+            </Card>
+          </div> */}
+        </TabsContent>
+
+        {/* Kalendář */}
+        <TabsContent value="kalendar" className="mt-6">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              
+              <Button onClick={() => handleCreateReservation()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Nová rezervace
+              </Button>
+            </div>
+            <CalendarView
+              selectedDate={selectedCalendarDate}
+              onDateSelect={handleCalendarDateSelect}
+              onReservationClick={handleReservationClick}
+              onCreateReservation={handleCreateReservation}
+              onEditReservation={handleEditReservation}
+              onDeleteReservation={handleDeleteReservation}
+              blockedTerms={blockedTerms}
+            />
+          </div>
+        </TabsContent>
+
+        {/* Nastavení */}
+        <TabsContent value="nastaveni" className="mt-6">
+          <div className="grid gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Provozní hodiny</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {loadingHodiny ? (
+                    <div className="text-center py-4">Načítání...</div>
+                  ) : (
+                    provozniHodiny.map((den) => (
+                      <div key={den.id} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div className="font-medium">
+                          {getDayName(den.denTydne)}
+                        </div>
+                        <div className="flex items-center gap-4">
+                          {den.jeZavreno ? (
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary">Zavřeno</Badge>
+                              <Button variant="outline" size="sm" onClick={() => handleEditOpeningHours(den)}>
+                                Otevřít
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{den.casOtevrani} - {den.casZavreni}</span>
+                              <Button variant="outline" size="sm" onClick={() => handleEditOpeningHours(den)}>
+                                Upravit
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {provozniHodiny.length === 0 && !loadingHodiny && (
+                    <div className="text-center py-4 text-muted-foreground">
+                      Žádná data nejsou k dispozici.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Blokování termínů</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="p-4">
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-medium leading-tight">Správa blokovaných termínů</h3>
+                      <p className="text-sm leading-relaxed text-muted-foreground">Blokujete dny, kdy nelze rezervovat (dovolená, údržba).</p>
+                    </div>
+                    <div className="w-full shrink-0 sm:w-auto">
+                      <Button onClick={openCreateBlock} className="w-full sm:w-auto">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Přidat blokovaný termín
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* List of blocked terms */}
+                  {loadingBlocks ? (
+                    <div className="text-center py-6">Načítání...</div>
+                  ) : blockedTerms.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      Žádné blokované termíny.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {blockedTerms.map((b) => (
+                        <div key={b.id} className="flex items-center justify-between p-3 bg-muted rounded">
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {b.nazev}
+                              {b.source === 'employee-vacation' && (
+                                <Badge variant="secondary" className="text-xs">Volno zaměstnance</Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {formatDate(b.datumOd)}
+                              {b.datumOd !== b.datumDo && (
+                                <span> - {formatDate(b.datumDo)}</span>
+                              )}
+                              {b.datumOd === b.datumDo && (
+                                <span className="ml-2 text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded">Jeden den</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {b.source !== 'employee-vacation' ? (
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => openEditBlock(b)}>
+                                  <Edit className="h-4 w-4 mr-2" />Upravit
+                                </Button>
+
+                                <Button size="sm" variant="destructive" onClick={async () => {
+                                  showConfirmDialog(
+                                    "Potvrdit smazání",
+                                    "Opravdu chcete deaktivovat tento blokovaný termín?",
+                                    async () => {
+                                      try {
+                                        const resp = await fetch(`/api/admin/rezervace/blokovane-terminy/${b.id}`, { method: 'DELETE' })
+                                        if (!resp.ok) throw new Error('Chyba při mazání')
+                                        await loadBlockedTerms()
+                                        toast({
+                                          title: "Úspěch",
+                                          description: "Blokovaný termín deaktivován",
+                                          variant: "default"
+                                        });
+                                      } catch (err) {
+                                        console.error(err)
+                                        toast({
+                                          title: "Chyba",
+                                          description: "Nepodařilo se smazat blokovaný termín",
+                                          variant: "destructive"
+                                        });
+                                      } finally {
+                                        closeConfirmDialog();
+                                      }
+                                    },
+                                    "Smazat",
+                                    "Zrušit"
+                                  );
+                                }}>
+                                  <Trash2 className="h-4 w-4 mr-2" />Smazat
+                                </Button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Spravuje se ve volnu zaměstnance</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+      
+      </Tabs>
+
+      <Dialog open={showFilterDialog} onOpenChange={setShowFilterDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Filtrovat rezervace</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="filter-search">Hledat (jméno, telefon, email, služba)</Label>
+              <Input
+                id="filter-search"
+                value={filters.search}
+                onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+                placeholder="Např. #884, Novák, 777..., balayage..."
+              />
+            </div>
+
+            <div>
+              <Label>Období rezervace</Label>
+              <Select value={filters.obdobi} onValueChange={(value: 'aktivni' | 'uplynule' | 'vse') => setFilters((prev) => ({ ...prev, obdobi: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Vyberte období" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="aktivni">Aktivní a budoucí</SelectItem>
+                  <SelectItem value="uplynule">Uplynulé</SelectItem>
+                  <SelectItem value="vse">Všechny rezervace</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Stav rezervace</Label>
+              <Select value={filters.stav} onValueChange={(value) => setFilters((prev) => ({ ...prev, stav: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Vyberte stav" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Všechny stavy</SelectItem>
+                  <SelectItem value="pending">Čeká na potvrzení</SelectItem>
+                  <SelectItem value="potvrzeno">Potvrzeno</SelectItem>
+                  <SelectItem value="dokonceno">Dokončeno</SelectItem>
+                  <SelectItem value="zruseno_zakaznikem">Zrušeno zákazníkem</SelectItem>
+                  <SelectItem value="zruseno_salonem">Zrušeno salonem</SelectItem>
+                  <SelectItem value="nedorazil">Nedorazil</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="filter-date-from">Datum od</Label>
+                <Input
+                  id="filter-date-from"
+                  type="date"
+                  value={filters.datumOd}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, datumOd: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="filter-date-to">Datum do</Label>
+                <Input
+                  id="filter-date-to"
+                  type="date"
+                  value={filters.datumDo}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, datumDo: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={resetFilters}>Vymazat filtry</Button>
+            <Button variant="outline" onClick={() => setShowFilterDialog(false)}>Zavřít</Button>
+            <Button onClick={() => setShowFilterDialog(false)}>Použít</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Export rezervací podle data</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="export-date-from">Datum od</Label>
+              <Input
+                id="export-date-from"
+                type="date"
+                value={exportRange.datumOd}
+                onChange={(e) => setExportRange((prev) => ({ ...prev, datumOd: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="export-date-to">Datum do</Label>
+              <Input
+                id="export-date-to"
+                type="date"
+                value={exportRange.datumDo}
+                onChange={(e) => setExportRange((prev) => ({ ...prev, datumDo: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportDialog(false)}>Zrušit</Button>
+            <Button onClick={handleExportReservations}>Exportovat CSV</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Formulář pro novou rezervaci */}
+      <Dialog open={showBlockDialog} onOpenChange={setShowBlockDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{blockForm.id && blockForm.id > 0 ? 'Upravit blokovaný termín' : 'Nový blokovaný termín'}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="block-nazev">Název</Label>
+            <Input id="block-nazev" value={blockForm.nazev} onChange={(e) => setBlockForm(prev => ({ ...prev, nazev: e.target.value }))} />
+          </div>
+
+          <div>
+            <Label htmlFor="block-popis">Popis (volitelně)</Label>
+            <Textarea id="block-popis" value={blockForm.popis} onChange={(e) => setBlockForm(prev => ({ ...prev, popis: e.target.value }))} />
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <input 
+              type="checkbox" 
+              id="block-jeden-den" 
+              checked={blockForm.jednoDen} 
+              onChange={(e) => {
+                const jednoDen = e.target.checked;
+                setBlockForm(prev => ({ 
+                  ...prev, 
+                  jednoDen,
+                  datumDo: jednoDen ? prev.datumOd : prev.datumDo
+                }));
+              }}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              aria-label="Blokovat pouze jeden den"
+            />
+            <Label htmlFor="block-jeden-den" className="text-sm font-normal">Blokovat pouze jeden den (24 hodin)</Label>
+          </div>
+
+          {blockForm.jednoDen ? (
+            <div>
+              <Label htmlFor="block-datum">Datum</Label>
+              <Input 
+                id="block-datum" 
+                type="date" 
+                value={blockForm.datumOd} 
+                onChange={(e) => setBlockForm(prev => ({ 
+                  ...prev, 
+                  datumOd: e.target.value,
+                  datumDo: e.target.value
+                }))} 
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="block-od">Datum od</Label>
+                <Input id="block-od" type="date" value={blockForm.datumOd} onChange={(e) => setBlockForm(prev => ({ ...prev, datumOd: e.target.value }))} />
+              </div>
+              <div>
+                <Label htmlFor="block-do">Datum do</Label>
+                <Input id="block-do" type="date" value={blockForm.datumDo} onChange={(e) => setBlockForm(prev => ({ ...prev, datumDo: e.target.value }))} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowBlockDialog(false)}>Zrušit</Button>
+          <Button onClick={saveBlock} disabled={isSavingBlock}>{isSavingBlock ? 'Ukládám...' : (blockForm.id && blockForm.id > 0 ? 'Uložit' : 'Vytvořit')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Detail reservation dialog */}
+    <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+      <DialogContent className="sm:max-w-lg border-neutral-800 bg-[#121212] text-neutral-100">
+        <DialogHeader>
+          <DialogTitle>Detail rezervace #{detailRezervace?.id}</DialogTitle>
+        </DialogHeader>
+
+        {detailRezervace && (
+          <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1 text-sm">
+            {/* Klient */}
+            <div className="border-b border-neutral-800/60 pb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-500/90">Klient</p>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-neutral-400">Jméno</span>
+                <span className="font-medium text-neutral-100">{detailRezervace.jmeno} {detailRezervace.prijmeni}</span>
+                <span className="text-neutral-400">E-mail</span>
+                <span className="font-medium text-neutral-100">{detailRezervace.email || 'Pouze telefon'}</span>
+                <span className="text-neutral-400">Telefon</span>
+                <span className="font-medium text-neutral-100">{detailRezervace.telefon || '-'}</span>
+              </div>
+            </div>
+
+            {/* Termin */}
+            <div className="border-b border-neutral-800/60 pb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-500/90">Termín</p>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-neutral-400">Datum</span>
+                <span className="font-medium text-neutral-100">{formatDate(detailRezervace.datum)}</span>
+                <span className="text-neutral-400">Čas</span>
+                <span className="font-medium text-neutral-100">
+                  {(detailRezervace.casOd || detailRezervace.cas_od || '-')}
+                  {' – '}
+                  {(detailRezervace.casDo || detailRezervace.cas_do || '-')}
+                </span>
+              </div>
+            </div>
+
+            {/* Sluzba a kadernice */}
+            <div className="border-b border-neutral-800/60 pb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-500/90">Služba a kadeřnice</p>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-neutral-400">Služb{(() => {
+                  // Parsování služeb z poznámky
+                  if (detailRezervace.poznamka?.includes('SLUŽBY:')) {
+                    const serviceLines = detailRezervace.poznamka.split('\n')
+                      .filter(line => line.includes(' min, ') && line.includes(' Kč)'))
+                      .length;
+                    return serviceLines > 1 ? 'y' : 'a';
+                  }
+                  return 'a';
+                })()}</span>
+                <span className="font-medium text-neutral-100">
+                  {(() => {
+                    // Pokud poznámka obsahuje strukturované služby, zpracuj je
+                    if (detailRezervace.poznamka?.includes('SLUŽBY:')) {
+                      const lines = detailRezervace.poznamka.split('\n');
+                      const serviceLines = lines.filter(line => 
+                        line.includes(' min, ') && line.includes(' Kč)')
+                      );
+                      
+                      if (serviceLines.length > 1) {
+                        return (
+                          <div className="space-y-1">
+                            <div className="font-bold text-emerald-200">
+                              {serviceLines.length} služeb celkem
+                            </div>
+                            <div className="text-xs text-neutral-300">
+                              {(expandedServices ? serviceLines : serviceLines.slice(0, 2)).map((line, idx) => (
+                                <div key={idx}>• {line.trim()}</div>
+                              ))}
+                              {serviceLines.length > 2 && !expandedServices && (
+                                <div 
+                                  className="cursor-pointer font-medium text-amber-300 hover:text-amber-200"
+                                  onClick={() => setExpandedServices(true)}
+                                >
+                                  + {serviceLines.length - 2} dalších...
+                                </div>
+                              )}
+                              {expandedServices && serviceLines.length > 2 && (
+                                <div 
+                                  className="cursor-pointer font-medium text-amber-300 hover:text-amber-200"
+                                  onClick={() => setExpandedServices(false)}
+                                >
+                                  - Skrýt detail
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      } else if (serviceLines.length === 1) {
+                        return serviceLines[0].trim();
+                      }
+                    }
+                    // Fallback na původní zobrazení
+                    return detailRezervace.sluzby || detailRezervace.sluzba?.nazev || 'Není určena';
+                  })()}
+                </span>
+                <span className="text-neutral-400">Kadeřnice</span>
+                <span className="font-medium text-neutral-100">{detailRezervace.kadernice || detailRezervace.zamestnanec?.jmeno || 'Nepřiřazeno'}</span>
+              </div>
+            </div>
+
+            {/* Platba a stav */}
+            <div className="border-b border-neutral-800/60 pb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-500/90">Platba a stav</p>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-neutral-400">Stav</span>
+                <span>{getStatusBadge(detailRezervace.stav)}</span>
+                <span className="text-neutral-400">Cena</span>
+                <span className="font-medium text-neutral-100">{formatCurrency(detailRezervace.cena)}</span>
+                {detailRezervace.zpusobPlatby && (
+                  <>
+                    <span className="text-neutral-400">Způsob platby</span>
+                    <span className="font-medium capitalize text-neutral-100">{detailRezervace.zpusobPlatby === 'hotove' ? 'Hotově' : detailRezervace.zpusobPlatby}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Doplnkove info */}
+            {((detailRezervace.pocetOsob && detailRezervace.pocetOsob > 1) || detailRezervace.pocetDeti || detailRezervace.poznamka) && (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-500/90">Doplňkové informace</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {detailRezervace.pocetOsob && detailRezervace.pocetOsob > 0 && (
+                    <>
+                      <span className="text-neutral-400">Počet osob</span>
+                      <span className="font-medium text-neutral-100">{detailRezervace.pocetOsob}</span>
+                    </>
+                  )}
+                  {(detailRezervace.pocetDeti ?? 0) > 0 && (
+                    <>
+                      <span className="text-neutral-400">Počet dětí</span>
+                      <span className="font-medium text-neutral-100">{detailRezervace.pocetDeti}</span>
+                    </>
+                  )}
+                  {detailRezervace.poznamka && (
+                    <>
+                        <span className="text-neutral-400">Poznámka</span>
+                        <span className="font-medium whitespace-pre-wrap text-neutral-100">
+                        {(() => {
+                          // Extrakce pouze zákaznické poznámky (bez seznamu služeb)
+                          if (detailRezervace.poznamka.includes('POZNÁMKA ZÁKAZNÍKA:')) {
+                            const sections = detailRezervace.poznamka.split('POZNÁMKA ZÁKAZNÍKA:');
+                            const customerNote = sections[1]?.trim();
+                            return customerNote || 'Žádná poznámka';
+                          }
+                          // Pokud neobsahuje strukturu, zobraz celou poznámku
+                          else if (!detailRezervace.poznamka.includes('SLUŽBY:')) {
+                            return detailRezervace.poznamka;
+                          }
+                          // Pokud obsahuje pouze služby bez poznámky zákazníka
+                          return 'Žádná poznámka';
+                        })()}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="pt-2">
+          <Button variant="outline" onClick={() => setShowDetailDialog(false)}>Zavřít</Button>
+          <Button onClick={() => { setShowDetailDialog(false); if (detailRezervace) handleEditReservation(detailRezervace); }}>
+            Upravit rezervaci
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Edit reservation dialog */}
+    <Dialog open={showEditNoteDialog} onOpenChange={setShowEditNoteDialog}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Upravit rezervaci #{editingRezervation?.id}</DialogTitle>
+        </DialogHeader>
+
+        <div className="overflow-y-auto flex-1 pr-1 space-y-5">
+          {loadingEditData && (
+            <p className="text-sm text-muted-foreground text-center py-2">Načítám data…</p>
+          )}
+
+          {/* Osobní údaje */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2 tracking-wide">Osobní údaje</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="edit-jmeno">Jméno *</Label>
+                <Input id="edit-jmeno" value={editDraft.jmeno} onChange={(e) => setEditDraft(p => ({ ...p, jmeno: e.target.value }))} placeholder="Jméno" />
+              </div>
+              <div>
+                <Label htmlFor="edit-prijmeni">Příjmení *</Label>
+                <Input id="edit-prijmeni" value={editDraft.prijmeni} onChange={(e) => setEditDraft(p => ({ ...p, prijmeni: e.target.value }))} placeholder="Příjmení" />
+              </div>
+              <div>
+                <Label htmlFor="edit-email">E-mail</Label>
+                <Input id="edit-email" type="email" value={editDraft.email} onChange={(e) => setEditDraft(p => ({ ...p, email: e.target.value }))} placeholder="email@example.cz" />
+              </div>
+              <div>
+                <Label htmlFor="edit-telefon">Telefon</Label>
+                <Input id="edit-telefon" value={editDraft.telefon} onChange={(e) => setEditDraft(p => ({ ...p, telefon: e.target.value }))} placeholder="+420 000 000 000" />
+              </div>
+            </div>
+          </div>
+
+          {/* Termín */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2 tracking-wide">Termín</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label htmlFor="edit-datum">Datum</Label>
+                <Input id="edit-datum" type="date" value={editDraft.datum} onChange={(e) => setEditDraft(p => ({ ...p, datum: e.target.value }))} />
+              </div>
+              <div>
+                <Label htmlFor="edit-cas-od">Čas od</Label>
+                <Input id="edit-cas-od" type="time" value={editDraft.casOd} onChange={(e) => setEditDraft(p => ({ ...p, casOd: e.target.value }))} />
+              </div>
+              <div>
+                <Label htmlFor="edit-cas-do">Čas do</Label>
+                <Input id="edit-cas-do" type="time" value={editDraft.casDo} onChange={(e) => setEditDraft(p => ({ ...p, casDo: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+
+          {/* Kadeřnice a služba */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2 tracking-wide">Kadeřnice a služba</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Kadeřnice</Label>
+                <Select value={editDraft.zamestnanecId || '_none'} onValueChange={(v) => setEditDraft(p => ({ ...p, zamestnanecId: v === '_none' ? '' : v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte kadeřnici…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">- bez přiřazení -</SelectItem>
+                    {editEmployees.map((emp) => (
+                      <SelectItem key={emp.id} value={String(emp.id)}>
+                        {emp.jmeno} {emp.prijmeni}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Služba</Label>
+                <Select value={editDraft.sluzbaId || '_none'} onValueChange={(v) => setEditDraft(p => ({ ...p, sluzbaId: v === '_none' ? '' : v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte službu…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">- bez změny -</SelectItem>
+                    {editSluzby.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.nazev}{s.cena ? ` (${s.cena} Kč)` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {/* Stav a platba */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2 tracking-wide">Stav a platba</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Stav</Label>
+                <Select value={editDraft.stav} onValueChange={(v) => setEditDraft(p => ({ ...p, stav: v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte stav…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Čeká na potvrzení</SelectItem>
+                    <SelectItem value="potvrzeno">Potvrzeno</SelectItem>
+                    <SelectItem value="dokonceno">Dokončeno</SelectItem>
+                    <SelectItem value="zruseno_zakaznikem">Zrušeno zákazníkem</SelectItem>
+                    <SelectItem value="zruseno_salonem">Zrušeno salonem</SelectItem>
+                    <SelectItem value="nedorazil">Nedorazil</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-cena">Cena (Kč)</Label>
+                <Input id="edit-cena" type="number" min="0" step="1" value={editDraft.cena} onChange={(e) => setEditDraft(p => ({ ...p, cena: parseInt(e.target.value) || 0 }))} placeholder="0" />
+              </div>
+              <div>
+                <Label>Způsob platby</Label>
+                <Select value={editDraft.zpusobPlatby || '_none'} onValueChange={(v) => setEditDraft(p => ({ ...p, zpusobPlatby: v === '_none' ? '' : v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">- nevyplněno -</SelectItem>
+                    <SelectItem value="hotove">Hotově</SelectItem>
+                    <SelectItem value="karta">Kartou</SelectItem>
+                    <SelectItem value="prevod">Převodem</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {/* Ostatní */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2 tracking-wide">Ostatní</p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <Label htmlFor="edit-osoby">Počet osob</Label>
+                <Input id="edit-osoby" type="number" min="1" value={editDraft.pocetOsob} onChange={(e) => setEditDraft(p => ({ ...p, pocetOsob: parseInt(e.target.value) || 1 }))} />
+              </div>
+              <div>
+                <Label htmlFor="edit-deti">Počet dětí</Label>
+                <Input id="edit-deti" type="number" min="0" value={editDraft.pocetDeti} onChange={(e) => setEditDraft(p => ({ ...p, pocetDeti: parseInt(e.target.value) || 0 }))} />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="edit-poznamka">Poznámka</Label>
+              <Textarea id="edit-poznamka" value={editDraft.poznamka} onChange={(e) => setEditDraft(p => ({ ...p, poznamka: e.target.value }))} placeholder="Volitelná poznámka k rezervaci" rows={3} />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="pt-3 border-t mt-2">
+          <Button variant="outline" onClick={() => setShowEditNoteDialog(false)}>Zrušit</Button>
+          <Button onClick={saveReservationNote} disabled={isSavingEdit}>
+            {isSavingEdit ? 'Ukládám…' : 'Uložit změny'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Edit opening hours dialog */}
+    <Dialog open={showHoursDialog} onOpenChange={setShowHoursDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Upravit provozní hodiny</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <Label htmlFor="hours">Zadejte rozsah (HH:MM-HH:MM) nebo 'zavřeno'</Label>
+          <Input id="hours" value={hoursDraft} onChange={(e) => setHoursDraft(e.target.value)} />
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowHoursDialog(false)}>Zrušit</Button>
+          <Button onClick={saveHoursDialog}>Uložit</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <ReservationForm
+      isOpen={showReservationForm}
+      onClose={() => setShowReservationForm(false)}
+      onSuccess={handleReservationFormSuccess}
+      preselectedDate={selectedCalendarDate}
+    />
+
+    <Dialog open={showBulkStatusDialog} onOpenChange={setShowBulkStatusDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Hromadná změna stavu</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            Vybrané rezervace: {selectedVisibleCount}
+          </p>
+          <Label>Nový stav</Label>
+          <Select value={bulkStatus} onValueChange={(value) => setBulkStatus(value as StavRezervace)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Vyberte stav" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(STAV_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowBulkStatusDialog(false)} disabled={isUpdatingBulkStatus}>
+            Zrušit
+          </Button>
+          <Button onClick={handleBulkStatusUpdate} disabled={isUpdatingBulkStatus}>
+            {isUpdatingBulkStatus ? 'Ukládám…' : 'Uložit stav'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Confirmation Dialog */}
+    <Dialog open={confirmDialog.isOpen} onOpenChange={closeConfirmDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-orange-500" />
+            {confirmDialog.title}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="py-4">
+          <p className="text-sm text-muted-foreground">
+            {confirmDialog.message}
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={closeConfirmDialog} disabled={confirmDialog.isLoading}>
+            {confirmDialog.cancelText}
+          </Button>
+          <Button 
+            variant="destructive" 
+            onClick={() => {
+              confirmDialog.onConfirm();
+            }}
+            disabled={confirmDialog.isLoading}
+          >
+            {confirmDialog.confirmText}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </div>
+  );
+}

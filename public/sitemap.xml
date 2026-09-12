@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Hlavní stránka -->
+  <url>
+    <loc>https://www.salon-zuza.cz/</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- Služby -->
+  <url>
+    <loc>https://www.salon-zuza.cz/sluzby</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Ceník -->
+  <url>
+    <loc>https://www.salon-zuza.cz/cenik</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Galerie -->
+  <url>
+    <loc>https://www.salon-zuza.cz/galerie</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Kontakt -->
+  <url>
+    <loc>https://www.salon-zuza.cz/kontakt</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Online rezervace -->
+  <url>
+    <loc>https://www.salon-zuza.cz/online-rezervace</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Děkujeme stránka (méně důležitá) -->
+  <url>
+    <loc>https://www.salon-zuza.cz/online-rezervace/dekujeme</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>never</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model ObsahStranky {
+  id         Int      @id @default(autoincrement())
+  klicObsahu String   @unique @map("klic_obsahu")
+  nazev      String?
+  obsah      String
+  typ        String   @default("text")
+  kategorie  String   @default("general")
+  popis      String?
+  jeAktivni  Boolean  @default(true) @map("je_aktivni")
+  poradoveId Int?     @map("poradove_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("obsah_stranky")
+}
+
+model KategorieSluzeb {
+  id        Int      @id @default(autoincrement())
+  nazev     String
+  popis     String?
+  poradi    Int      @default(0)
+  jeAktivni Boolean  @default(true) @map("je_aktivni")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  sluzby    Sluzba[]
+
+  @@map("kategorie_sluzeb")
+}
+
+model Sluzba {
+  id                Int             @id @default(autoincrement())
+  nazev             String
+  popis             String?
+  kategorieId       Int             @map("kategorie_id")
+  dobaTrvaniMinuty  Int             @map("doba_trvani_minuty")
+  cenaTopStylist    Int             @map("cena_top_stylist")
+  cenaStylist       Int             @map("cena_stylist")
+  cenaJuniorStylist Int             @map("cena_junior_stylist")
+  jeAktivni         Boolean         @default(true) @map("je_aktivni")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  poradi            Int             @default(0)
+  rezervace         Rezervace[]
+  kategorie         KategorieSluzeb @relation(fields: [kategorieId], references: [id])
+
+  @@map("sluzby")
+}
+
+model GalerieObrazek {
+  id          Int      @id @default(autoincrement())
+  nazev       String
+  url         String
+  alt         String
+  popis       String?
+  kategorie   String   @default("general")
+  jeViditelna Boolean  @default(true) @map("je_viditelna")
+  poradi      Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("galerie_obrazky")
+}
+
+model Fotka {
+  id         Int      @id @default(autoincrement())
+  nazev      String
+  popis      String?
+  url        String
+  kategorie  String
+  poradoveId Int?     @map("poradove_id")
+  jeAktivni  Boolean  @default(true) @map("je_aktivni")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("fotky")
+}
+
+model Recenze {
+  id          Int      @id @default(autoincrement())
+  jmeno       String
+  text        String
+  hodnoceni   Int
+  jeSchvalena Boolean  @default(false) @map("je_schvalena")
+  datum       DateTime @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("recenze")
+}
+
+model Zamestnanec {
+  id             Int         @id @default(autoincrement())
+  jmeno          String
+  prijmeni       String
+  uroven         String
+  email          String      @unique
+  telefon        String?
+  fotoUrl        String?     @map("foto_url")
+  rozvrh         Json?
+  dnyVolna       String[]    @default([]) @map("dny_volna")
+  jeAktivni      Boolean     @default(true) @map("je_aktivni")
+  jeAdmin        Boolean     @default(false) @map("je_admin")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  hashedPassword String?     @map("hashed_password")
+  rezervace      Rezervace[]
+  visibleTargets EmployeeVisibility[] @relation("EmployeeVisibilityViewer")
+  visibleBy      EmployeeVisibility[] @relation("EmployeeVisibilityTarget")
+
+  @@map("zamestnanci")
+}
+
+model EmployeeVisibility {
+  id               Int         @id @default(autoincrement())
+  viewerEmployeeId Int         @map("viewer_employee_id")
+  targetEmployeeId Int         @map("target_employee_id")
+  jeAktivni        Boolean     @default(true) @map("je_aktivni")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+  viewerEmployee   Zamestnanec @relation("EmployeeVisibilityViewer", fields: [viewerEmployeeId], references: [id], onDelete: Cascade)
+  targetEmployee   Zamestnanec @relation("EmployeeVisibilityTarget", fields: [targetEmployeeId], references: [id], onDelete: Cascade)
+
+  @@unique([viewerEmployeeId, targetEmployeeId], map: "employee_visibility_unique")
+  @@index([viewerEmployeeId], map: "idx_employee_visibility_viewer")
+  @@index([targetEmployeeId], map: "idx_employee_visibility_target")
+  @@map("employee_visibility")
+}
+
+model ZpravaKontaktu {
+  id          Int      @id @default(autoincrement())
+  jmeno       String
+  email       String
+  telefon     String?
+  zprava      String
+  jePrecetena Boolean  @default(false) @map("je_precetena")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("zpravy_kontaktu")
+}
+
+model Rezervace {
+  id                  Int          @id @default(autoincrement())
+  jmeno               String
+  prijmeni            String
+  email               String?
+  telefon             String
+  datum               DateTime
+  casOd               String       @map("cas_od")
+  casDo               String       @map("cas_do")
+  sluzbaId            Int?         @map("sluzba_id")
+  zamestnanecId       Int?         @map("zamestnanec_id")
+  poznamka            String?
+  stav                String       @default("pending")
+  cena                Int
+  zpusobPlatby        String?      @default("hotove") @map("zpusob_platby")
+  notifikaceEmail     Boolean      @default(true) @map("notifikace_email")
+  notifikaceSms       Boolean      @default(false) @map("notifikace_sms")
+  skupinaRezervaci    String?      @map("skupina_rezervaci_id")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+  pocetDeti           Int          @default(0) @map("pocet_deti")
+  pocetOsob           Int          @default(1) @map("pocet_osob")
+  sluzba              Sluzba?      @relation(fields: [sluzbaId], references: [id])
+  zamestnanec         Zamestnanec? @relation(fields: [zamestnanecId], references: [id])
+
+  @@map("rezervace")
+}
+
+model ProvozniHodiny {
+  id          Int     @id @default(autoincrement())
+  denTydne    Int     @unique @map("den_tydne")
+  casOtevrani String  @map("cas_otevrani")
+  casZavreni  String  @map("cas_zavreni")
+  jeZavreno   Boolean @default(false) @map("je_zavreno")
+  jeAktivni   Boolean @default(true) @map("je_aktivni")
+
+  @@map("provozni_hodiny")
+}
+
+model BlokovanyTermin {
+  id        Int      @id @default(autoincrement())
+  nazev     String
+  popis     String?
+  datumOd   DateTime @map("datum_od")
+  datumDo   DateTime @map("datum_do")
+  jeAktivni Boolean  @default(true) @map("je_aktivni")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("blokovane_terminy")
+}
+
+model IssueReport {
+  id            Int      @id @default(autoincrement())
+  description   String
+  severity      String   @default("medium")
+  attachmentUrl String?  @map("attachment_url")
+  createdAt     DateTime @default(now()) @map("created_at")
+  isResolved    Boolean  @default(false) @map("is_resolved")
+
+  @@map("issue_reports")
+}

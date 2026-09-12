@@ -1,0 +1,71 @@
+name: Build iOS Simulator app
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - testing
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/build-ios.yml"
+
+jobs:
+  build-ios-simulator:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        run: npm install --global pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate native iOS project
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --clean --platform ios --non-interactive
+
+      - name: Build iOS Simulator app
+        working-directory: apps/mobile/ios
+        shell: bash
+        run: |
+          workspace="$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          if [ -z "$workspace" ]; then
+            echo "Xcode workspace was not generated."
+            exit 1
+          fi
+
+          scheme="$(basename "$workspace" .xcworkspace)"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -sdk iphonesimulator \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package iOS Simulator app
+        working-directory: apps/mobile/ios
+        run: |
+          app_path="$(find build/Build/Products/Release-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "iOS Simulator app was not produced."
+            exit 1
+          fi
+
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" salon-zuza-ios-simulator.zip
+
+      - name: Upload iOS Simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: salon-zuza-ios-simulator
+          path: apps/mobile/ios/salon-zuza-ios-simulator.zip

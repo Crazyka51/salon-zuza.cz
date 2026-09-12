@@ -1,0 +1,41 @@
+# robots.txt - Salon Zuza
+# Řídí indexování vyhledávacími boty
+
+User-agent: *
+Allow: /
+Allow: /cenik
+Allow: /sluzby
+Allow: /galerie
+Allow: /kontakt
+Allow: /online-rezervace
+
+# Zakázat indexování admin a interních sekcí
+Disallow: /admin
+Disallow: /adminfunctions
+Disallow: /api/
+Disallow: /maintenance
+Disallow: /preview
+Disallow: /test-calendar
+
+# Zakázat dynamické debug/dev stránky
+Disallow: /_next
+Disallow: /.git
+Disallow: /.env*
+
+# Zakázat CSS/JS sourcemaps (nejsou potřeba pro indexaci)
+Disallow: /*.js.map
+Disallow: /*.css.map
+
+# Sitemap
+Sitemap: https://www.salon-zuza.cz/sitemap.xml
+
+# Crawl-delay pro minimalizaci zatížení
+Crawl-delay: 1
+
+# Zpracovatelé robotů
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+User-agent: DotBot
+Disallow: /

@@ -1,0 +1,51 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - testing
+    paths:
+      - 'apps/mobile/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install dependencies
+        run: |
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+      
+      - name: Generate native Android project
+        run: |
+          cd apps/mobile
+          pnpm exec expo prebuild --clean --platform android --non-interactive
+      
+      - name: Build release APK
+        run: |
+          cd apps/mobile/android
+          ./gradlew assembleRelease
+      
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: salon-zuza-release.apk
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk

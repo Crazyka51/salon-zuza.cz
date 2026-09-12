@@ -1,0 +1,343 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@keyframes pending-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-4px); }
+  30% { transform: translateX(4px); }
+  45% { transform: translateX(-3px); }
+  60% { transform: translateX(3px); }
+  75% { transform: translateX(-1px); }
+}
+
+.animate-pending-shake {
+  animation: pending-shake 0.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pending-shake {
+    animation: none;
+  }
+}
+
+/* Tmavý motiv admin rozhraní - nativní ikona hodin u <input type="time"> je jinak tmavá a splývá s pozadím */
+input[type='time']::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  html {
+    font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
+    width: 100%;
+    overflow-x: hidden;
+  }
+  
+  body {
+    font-family: var(--font-montserrat), 'Montserrat', system-ui, -apple-system, sans-serif;
+    font-weight: 400;
+    line-height: 1.6;
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-montserrat), 'Montserrat', system-ui, -apple-system, sans-serif;
+  }
+}
+
+:root {
+  --background: #1e1e1e;
+  --foreground: #e5e5e5;
+  --card: #171717;
+  --card-foreground: #e5e5e5;
+  --popover: #252525;
+  --popover-foreground: #e5e5e5;
+  --primary: #f7b91c;
+  --primary-foreground: #1e1e1e;
+  --secondary: #353535;
+  --secondary-foreground: #e5e5e5;
+  --muted: #2d2d2d;
+  --muted-foreground: #c0c0c0;
+  --accent: #2e2e2e;
+  --accent-foreground: #e5e5e5;
+  --destructive: oklch(0.55 0.25 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --ring: #f7b91c;
+  --chart-1: oklch(0.55 0.15 264);
+  --chart-2: oklch(0.60 0.12 160);
+  --chart-3: oklch(0.65 0.12 70);
+  --chart-4: oklch(0.52 0.18 300);
+  --chart-5: oklch(0.58 0.15 20);
+  --radius: 0.625rem;
+  --sidebar: #1e1e1e;
+  --sidebar-foreground: #e5e5e5;
+  --sidebar-primary: #f7b91c;
+  --sidebar-primary-foreground: #1e1e1e;
+  --sidebar-accent: #353535;
+  --sidebar-accent-foreground: #e5e5e5;
+  --sidebar-border: #2e2e2e;
+  --sidebar-ring: #f7b91c;
+}
+
+.dark {
+  --background: #1a1d24;
+  --foreground: #f5f5f5;
+  --card: #171717;
+  --card-foreground: #f5f5f5;
+  --popover: #252525;
+  --popover-foreground: #f5f5f5;
+  --primary: #f7b91c;
+  --primary-foreground: #1e1e1e;
+  --secondary: #353535;
+  --secondary-foreground: #f5f5f5;
+  --muted: #2d2d2d;
+  --muted-foreground: #d0d0d0;
+  --accent: #2e2e2e;
+  --accent-foreground: #f5f5f5;
+  --destructive: oklch(0.55 0.25 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: #2e2e2e;
+  --input: #404040;
+  --ring: #f7b91c;
+  --chart-1: oklch(0.55 0.15 264);
+  --chart-2: oklch(0.60 0.12 160);
+  --chart-3: oklch(0.65 0.12 70);
+  --chart-4: oklch(0.52 0.18 300);
+  --chart-5: oklch(0.58 0.15 20);
+  --sidebar: #1e1e1e;
+  --sidebar-foreground: #f5f5f5;
+  --sidebar-primary: #f7b91c;
+  --sidebar-primary-foreground: #1e1e1e;
+  --sidebar-accent: #353535;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #2e2e2e;
+  --sidebar-ring: #f7b91c;
+}
+
+.light {
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+  --card: #f8f9fa;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
+  --primary: #f7b91c;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1a1a1a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #1a1a1a;
+  --destructive: oklch(0.55 0.25 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #f7b91c;
+  --chart-1: oklch(0.55 0.15 264);
+  --chart-2: oklch(0.60 0.12 160);
+  --chart-3: oklch(0.65 0.12 70);
+  --chart-4: oklch(0.52 0.18 300);
+  --chart-5: oklch(0.58 0.15 20);
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #f7b91c;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #f7b91c;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-none;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom utility classes */
+@layer utilities {
+  .progress-bar {
+    transition: width 500ms ease-in-out;
+  }
+  
+  .bg-sidebar-card-top {
+    background-color: #353535;
+  }
+  
+  .sidebar-separator-top {
+    border-bottom: 1px solid #2e2e2e;
+  }
+  
+  .sidebar-separator-bottom {
+    border-top: 1px solid #2e2e2e;
+  }
+  
+  .text-premium-yellow {
+    color: #f7b91c;
+  }
+  
+  .icon-background {
+    background: #2d2d2d;
+  }
+  
+  .tooltip-head {
+    background: #1d1d1d;
+  }
+  
+  .tooltip-body {
+    background: #252525;
+  }
+  
+  .search-icon {
+    top: 50%;
+    transform: translate(0, -50%);
+  }
+  
+  .card-stack-border {
+    border-bottom: 2px solid #696969;
+  }
+  
+  .bg-details {
+    background-color: #1e1e1e;
+  }
+  
+  .add-component-head {
+    background-color: #181818;
+    background-image: url("https://www.transparenttextures.com/patterns/carbon-fibre.png");
+  }
+  
+  .sidebar-item-selected {
+    color: white;
+    border-right: 2px solid white;
+  }
+  
+  .sidebar-item {
+    border-right: 2px solid transparent;
+  }
+  
+  .sidebar-item:hover {
+    color: #a1a0a0;
+  }
+
+  /* Disable hover effect on Recharts bars - no color change */
+  .recharts-bar-rectangle:hover,
+  .recharts-bar-rectangle:focus {
+    fill: inherit !important;
+    opacity: inherit !important;
+  }
+  
+  .recharts-active-bar {
+    fill: inherit !important;
+    opacity: inherit !important;
+  }
+
+  /* Responsive utilities */
+  .container-responsive {
+    @apply px-3 sm:px-4 lg:px-6 xl:px-8;
+  }
+
+  .text-responsive {
+    @apply text-sm sm:text-base;
+  }
+
+  .text-responsive-lg {
+    @apply text-base sm:text-lg lg:text-xl;
+  }
+
+  .text-responsive-xl {
+    @apply text-lg sm:text-xl lg:text-2xl xl:text-3xl;
+  }
+
+  .spacing-responsive {
+    @apply space-y-3 sm:space-y-4 lg:space-y-6;
+  }
+
+  .gap-responsive {
+    @apply gap-3 sm:gap-4 lg:gap-6;
+  }
+
+  .p-responsive {
+    @apply p-3 sm:p-4 lg:p-6;
+  }
+
+  .grid-responsive {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+  }
+
+  .grid-responsive-stats {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4;
+  }
+
+  /* Touch targets for mobile */
+  .touch-target {
+    @apply min-h-11 min-w-11;
+  }
+
+  /* Scrollable tables on mobile */
+  .table-mobile {
+    @apply overflow-x-auto -mx-3 sm:mx-0;
+  }
+
+  .table-mobile table {
+    @apply min-w-150;
+  }
+
+  /* Hide on mobile */
+  .hide-mobile {
+    @apply hidden sm:block;
+  }
+
+  .show-mobile {
+    @apply block sm:hidden;
+  }
+}
