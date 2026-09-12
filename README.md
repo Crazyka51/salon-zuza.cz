@@ -155,4 +155,4 @@ Licence projektu zatím není v repozitáři specifikována. Zdrojový kód a m�
 ## Kontakt
 
 - Web: [salon-zuza.cz](https://www.salon-zuza.cz)
-- Repozitář: [github.com/Crazyka51/salonzuza](https://github.com/Crazyka51/salonzuza)
+- Repozitář: [github.com/Crazyka51/salon-zuza.cz](https://github.com/Crazyka51/salon-zuza.cz)
